@@ -1,12 +1,15 @@
 --[[
-    ⚡ Steal An Egg V2 - Ultra Optimized + AUTO FARM EDITION ⚡
+    ⚡ Steal An Egg V2 - Ultra Farm Edition v2 FINAL ⚡
     Features:
-    - Ultra FPS Boost
-    - Auto Treadmill (AFK speed farming)
-    - Auto Steal Egg (dari base orang lain)
-    - Auto Collect Egg (yang jatuh di sekitar)
-    - Auto Rejoin on Kick (optional)
-    - Smart Object Cleaner
+    - Ultra FPS Boost + Smart Object Cleaner
+    - Auto Treadmill + Auto Steal Egg + Auto Collect Egg
+    - Anti-Kick + Auto Rejoin
+    - Anti-AFK 3 Lapis
+    - Stealth Mode
+    - Toggle GUI (Draggable + Minimize + Close)
+    - Auto Go To Base Sendiri
+    - Server Hop
+    - Config Save/Load
 ]]
 
 --============================================================
@@ -19,22 +22,24 @@ end)
 --============================================================
 -- SERVICES
 --============================================================
-local Players     = game:GetService("Players")
-local Lighting    = game:GetService("Lighting")
-local RunService  = game:GetService("RunService")
-local StarterGui  = game:GetService("StarterGui")
-local Stats       = game:GetService("Stats")
-local VirtualUser = game:GetService("VirtualUser")
-local Workspace   = workspace
+local Players         = game:GetService("Players")
+local Lighting        = game:GetService("Lighting")
+local RunService      = game:GetService("RunService")
+local StarterGui      = game:GetService("StarterGui")
+local Stats           = game:GetService("Stats")
+local VirtualUser     = game:GetService("VirtualUser")
+local TeleportService = game:GetService("TeleportService")
+local HttpService     = game:GetService("HttpService")
+local UserInput       = game:GetService("UserInputService")
+local Workspace       = workspace
 
 local LocalPlayer = Players.LocalPlayer
 local Terrain     = Workspace:FindFirstChildOfClass("Terrain")
 
 --============================================================
--- CONFIG
+-- CONFIG DEFAULT
 --============================================================
-local CONFIG = {
-    -- Optimizer
+local DEFAULT_CONFIG = {
     REMOVE_DECALS    = true,
     REMOVE_SOUNDS    = true,
     REMOVE_MESHES    = false,
@@ -44,17 +49,64 @@ local CONFIG = {
     AUTO_CLEANUP     = true,
     CLEANUP_INTERVAL = 30,
 
-    -- Auto Farm
-    AUTO_TREADMILL       = true,   -- Auto AFK di treadmill sendiri
-    AUTO_STEAL_EGG       = true,   -- Auto steal egg dari base lain
-    AUTO_COLLECT_EGG     = true,   -- Auto ambil egg yang ada di sekitar
-    AUTO_EQUIP_BEST      = false,  -- Auto equip pet terbaik (kalau ada)
-    STEAL_RANGE          = 300,    -- Radius steal (stud)
-    COLLECT_RANGE        = 50,     -- Radius collect (stud)
-    LOOP_DELAY           = 0.1,    -- Delay antar loop
-    TELEPORT_STEAL       = true,   -- Teleport ke egg sebelum steal
-    TELEPORT_OFFSET      = 4,      -- Offset dari egg biar gak stuck
+    AUTO_TREADMILL   = true,
+    AUTO_STEAL_EGG   = true,
+    AUTO_COLLECT_EGG = true,
+    STEAL_RANGE      = 300,
+    COLLECT_RANGE    = 50,
+    LOOP_DELAY       = 0.1,
+    TELEPORT_STEAL   = true,
+    TELEPORT_OFFSET  = 4,
+
+    ANTI_KICK        = true,
+    ANTI_AFK         = true,
+    STEALTH_MODE     = false,
+    STEALTH_DELAY    = 0.5,
+
+    AUTO_GO_BASE     = true,
+    SERVER_HOP       = false,
+    SAVE_CONFIG      = true,
 }
+
+--============================================================
+-- CONFIG SAVE / LOAD
+--============================================================
+local CONFIG_FILE = "SAE_UltraFarm_Config.json"
+local CONFIG = {}
+
+local function deepCopy(t)
+    local copy = {}
+    for k, v in pairs(t) do copy[k] = v end
+    return copy
+end
+
+local function saveConfig()
+    if not CONFIG.SAVE_CONFIG then return end
+    pcall(function()
+        if writefile then
+            writefile(CONFIG_FILE, HttpService:JSONEncode(CONFIG))
+        end
+    end)
+end
+
+local function loadConfig()
+    local loaded = nil
+    pcall(function()
+        if isfile and isfile(CONFIG_FILE) then
+            loaded = HttpService:JSONDecode(readfile(CONFIG_FILE))
+        end
+    end)
+    if loaded then
+        CONFIG = deepCopy(DEFAULT_CONFIG)
+        for k, v in pairs(loaded) do
+            if CONFIG[k] ~= nil then CONFIG[k] = v end
+        end
+    else
+        CONFIG = deepCopy(DEFAULT_CONFIG)
+    end
+end
+
+loadConfig()
 
 --============================================================
 -- LIGHTING OPTIMIZATION
@@ -221,7 +273,7 @@ end
 pcall(function() StarterGui:SetCore("ParticlesDisabled", true) end)
 
 --============================================================
--- 🥚 AUTO FARM CORE
+-- AUTO FARM CORE
 --============================================================
 local function getCharacter()
     local char = LocalPlayer.Character
@@ -234,7 +286,6 @@ local function getCharacter()
     return nil
 end
 
--- Cari egg berdasarkan nama model (kebanyakan game pakai nama "Egg")
 local function isEgg(obj)
     if not obj or not obj.Parent then return false end
     local name = obj.Name:lower()
@@ -243,7 +294,6 @@ local function isEgg(obj)
         and not name:find("treadmill")
 end
 
--- Ambil posisi egg
 local function getEggPosition(egg)
     if egg:IsA("BasePart") then return egg.Position end
     if egg:IsA("Model") then
@@ -253,7 +303,7 @@ local function getEggPosition(egg)
     return nil
 end
 
--- Teleport halus ke posisi target
+-- STEALTH TELEPORT
 local function teleportTo(hrp, pos)
     if not hrp or not pos then return end
     local offset = Vector3.new(
@@ -261,17 +311,25 @@ local function teleportTo(hrp, pos)
         0,
         math.random(-CONFIG.TELEPORT_OFFSET, CONFIG.TELEPORT_OFFSET)
     )
-    hrp.CFrame = CFrame.new(pos + offset + Vector3.new(0, 3, 0))
+    local target = pos + offset + Vector3.new(0, 3, 0)
+    if CONFIG.STEALTH_MODE then
+        local start = hrp.Position
+        local steps = 5
+        for i = 1, steps do
+            local alpha = i / steps
+            hrp.CFrame = CFrame.new(start:Lerp(target, alpha))
+            task.wait(CONFIG.STEALTH_DELAY / steps)
+        end
+    else
+        hrp.CFrame = CFrame.new(target)
+    end
 end
 
---🔥 AUTO STEAL EGG (dari base lain)
-local function autoStealEgg()
-    if not CONFIG.AUTO_STEAL_EGG then return end
-    local char, hrp, hum = getCharacter()
-    if not char then return end
-
-    local myBase = nil
-    -- Cari base sendiri biar gak steal punya sendiri
+-- AUTO STEAL EGG
+local cachedMyBase = nil
+local function getMyBase()
+    if cachedMyBase and cachedMyBase.Parent then return cachedMyBase end
+    local found = nil
     pcall(function()
         for _, v in ipairs(Workspace:GetDescendants()) do
             if v:IsA("BasePart") and (v.Name:lower():find("base") or v.Name:lower():find("plot")) then
@@ -279,27 +337,35 @@ local function autoStealEgg()
                 if owner then
                     local oName = owner.Value and tostring(owner.Value) or owner.Name
                     if oName:lower() == LocalPlayer.Name:lower() then
-                        myBase = v
+                        found = v
                         break
                     end
                 end
             end
         end
     end)
+    cachedMyBase = found
+    return found
+end
 
+local function autoStealEgg()
+    if not CONFIG.AUTO_STEAL_EGG then return end
+    local char, hrp, hum = getCharacter()
+    if not char then return end
+
+    local myBase = getMyBase()
     local closest, closestDist = nil, math.huge
+
     for _, v in ipairs(Workspace:GetDescendants()) do
         if isEgg(v) then
-            -- Skip egg yang ada di base sendiri
-            if myBase and v:IsDescendantOf(myBase) then
-                -- Egg di base sendiri = tetap diambil (bukan steal)
-            end
-            local pos = getEggPosition(v)
-            if pos then
-                local dist = (hrp.Position - pos).Magnitude
-                if dist < CONFIG.STEAL_RANGE and dist < closestDist then
-                    closest = v
-                    closestDist = dist
+            if not (myBase and v:IsDescendantOf(myBase)) then
+                local pos = getEggPosition(v)
+                if pos then
+                    local dist = (hrp.Position - pos).Magnitude
+                    if dist < CONFIG.STEAL_RANGE and dist < closestDist then
+                        closest = v
+                        closestDist = dist
+                    end
                 end
             end
         end
@@ -309,26 +375,20 @@ local function autoStealEgg()
         local pos = getEggPosition(closest)
         if pos and CONFIG.TELEPORT_STEAL then
             pcall(teleportTo, hrp, pos)
-            task.wait(0.15)
+            task.wait(CONFIG.STEALTH_MODE and 0.3 or 0.15)
         end
-        -- Coba panggil remote / ProximityPrompt
         pcall(function()
             local prompt = closest:FindFirstChildWhichIsA("ProximityPrompt", true)
-            if prompt then
-                fireproximityprompt(prompt)
-            end
+            if prompt then fireproximityprompt(prompt) end
         end)
-        -- Fallback: cari ClickDetector
         pcall(function()
             local cd = closest:FindFirstChildWhichIsA("ClickDetector", true)
-            if cd then
-                fireclickdetector(cd)
-            end
+            if cd then fireclickdetector(cd) end
         end)
     end
 end
 
---🔥 AUTO COLLECT EGG (egg yang di-drop di sekitar / base sendiri)
+-- AUTO COLLECT EGG
 local function autoCollectEgg()
     if not CONFIG.AUTO_COLLECT_EGG then return end
     local char, hrp, hum = getCharacter()
@@ -337,28 +397,23 @@ local function autoCollectEgg()
     for _, v in ipairs(Workspace:GetDescendants()) do
         if isEgg(v) then
             local pos = getEggPosition(v)
-            if pos then
-                local dist = (hrp.Position - pos).Magnitude
-                if dist < CONFIG.COLLECT_RANGE then
-                    pcall(function()
-                        local prompt = v:FindFirstChildWhichIsA("ProximityPrompt", true)
-                        if prompt then fireproximityprompt(prompt) end
-                    end)
-                end
+            if pos and (hrp.Position - pos).Magnitude < CONFIG.COLLECT_RANGE then
+                pcall(function()
+                    local prompt = v:FindFirstChildWhichIsA("ProximityPrompt", true)
+                    if prompt then fireproximityprompt(prompt) end
+                end)
             end
         end
     end
 end
 
---🔥 AUTO TREADMILL (AFK di treadmill sendiri)
+-- AUTO TREADMILL
 local function autoTreadmill()
     if not CONFIG.AUTO_TREADMILL then return end
     local char, hrp, hum = getCharacter()
     if not char then return end
 
-    -- Cari treadmill terdekat / milik sendiri
-    local target = nil
-    local bestDist = math.huge
+    local target, bestDist = nil, math.huge
     for _, v in ipairs(Workspace:GetDescendants()) do
         if (v:IsA("BasePart") or v:IsA("Model"))
             and (v.Name:lower():find("treadmill") or v.Name:lower():find("conveyor")) then
@@ -378,20 +433,32 @@ local function autoTreadmill()
         local pos = target:IsA("BasePart") and target.Position
             or (target.PrimaryPart and target.PrimaryPart.Position)
         if pos then
-            local dist = (hrp.Position - pos).Magnitude
-            -- Teleport ke treadmill kalau jauh
-            if dist > 8 then
+            if bestDist > 8 then
                 pcall(teleportTo, hrp, pos)
-                task.wait(0.2)
+                task.wait(CONFIG.STEALTH_MODE and 0.4 or 0.2)
             end
-            -- Tahan posisi biar stay di atas treadmill
-            if hum then
-                hum:MoveTo(pos + Vector3.new(0, 0, 0))
-            end
-            -- Kunci posisi biar gak kegeser
-            if hrp and dist < 10 then
+            if hrp and bestDist < 10 then
                 hrp.Velocity = Vector3.zero
                 hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0))
+            end
+        end
+    end
+end
+
+-- AUTO GO TO BASE
+local function autoGoToBase()
+    if not CONFIG.AUTO_GO_BASE then return end
+    local char, hrp, hum = getCharacter()
+    if not char then return end
+    local base = getMyBase()
+    if base then
+        local pos = base:IsA("BasePart") and base.Position
+            or (base.PrimaryPart and base.PrimaryPart.Position)
+        if pos then
+            local dist = (hrp.Position - pos).Magnitude
+            if dist > 500 then
+                pcall(teleportTo, hrp, pos)
+                task.wait(0.3)
             end
         end
     end
@@ -405,23 +472,116 @@ task.spawn(function()
         pcall(autoStealEgg)
         pcall(autoCollectEgg)
         pcall(autoTreadmill)
+        pcall(autoGoToBase)
     end
 end)
 
 --============================================================
--- ANTI-AFK (Biar gak di-kick pas AFK)
+-- SAFETY 1: ANTI-KICK + AUTO REJOIN
 --============================================================
-LocalPlayer.Idled:Connect(function()
-    VirtualUser:CaptureController()
-    VirtualUser:ClickButton2(Vector2.new())
-end)
+if CONFIG.ANTI_KICK then
+    local lastServer = game.JobId
+    local lastPlace  = game.PlaceId
+
+    task.spawn(function()
+        while task.wait(5) do
+            lastServer = game.JobId
+            lastPlace  = game.PlaceId
+        end
+    end)
+
+    LocalPlayer.OnTeleport:Connect(function(state)
+        if state == Enum.TeleportState.Started then
+            pcall(saveConfig)
+        end
+    end)
+
+    pcall(function()
+        game:GetService("CoreGui").ChildAdded:Connect(function(g)
+            if g.Name == "RobloxPromptGui" then
+                local prompt = g:FindFirstChild("promptOverlay")
+                if prompt then
+                    prompt.DescendantAdded:Connect(function(d)
+                        if d.Name == "ErrorMessage" then
+                            task.wait(3)
+                            pcall(function()
+                                TeleportService:TeleportToPlaceInstance(lastPlace, lastServer, LocalPlayer)
+                            end)
+                        end
+                    end)
+                end
+            end
+        end)
+    end)
+end
+
+--============================================================
+-- SAFETY 2: ANTI-AFK 3 LAPIS
+--============================================================
+if CONFIG.ANTI_AFK then
+    LocalPlayer.Idled:Connect(function()
+        VirtualUser:CaptureController()
+        VirtualUser:ClickButton2(Vector2.new())
+    end)
+
+    task.spawn(function()
+        while task.wait(30) do
+            pcall(function()
+                VirtualUser:CaptureController()
+                VirtualUser:ClickButton2(Vector2.new(0, 0))
+            end)
+        end
+    end)
+
+    task.spawn(function()
+        while task.wait(60) do
+            pcall(function()
+                local mouse = LocalPlayer:GetMouse()
+                if mouse then
+                    mouse.X = mouse.X + math.random(-5, 5)
+                    mouse.Y = mouse.Y + math.random(-5, 5)
+                end
+            end)
+        end
+    end)
+end
+
+--============================================================
+-- UTILITY: SERVER HOP
+--============================================================
+local function serverHop()
+    pcall(function()
+        local api = "https://games.roblox.com/v1/games/" .. game.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+        local data = HttpService:JSONDecode(game:HttpGet(api))
+        for _, srv in ipairs(data.data) do
+            if srv.playing < srv.maxPlayers and srv.id ~= game.JobId then
+                pcall(saveConfig)
+                TeleportService:TeleportToPlaceInstance(game.PlaceId, srv.id, LocalPlayer)
+                return
+            end
+        end
+    end)
+end
+
+if CONFIG.SERVER_HOP then
+    task.spawn(function()
+        while task.wait(60) do
+            pcall(function()
+                local ping = Stats.Network.ServerStatsItem["Data Ping"]:GetValue()
+                if ping > 500 then
+                    serverHop()
+                end
+            end)
+        end
+    end)
+end
 
 --============================================================
 -- FPS + PING COUNTER
 --============================================================
 local gui = LocalPlayer:WaitForChild("PlayerGui")
 local fpsLabel = Instance.new("TextLabel")
-fpsLabel.Size = UDim2.new(0, 200, 0, 28)
+fpsLabel.Size = UDim2.new(0, 260, 0, 28)
 fpsLabel.Position = UDim2.new(0, 10, 0, 10)
 fpsLabel.BackgroundTransparency = 1
 fpsLabel.TextColor3 = Color3.fromRGB(0, 255, 100)
@@ -441,20 +601,7 @@ RunService.RenderStepped:Connect(function(dt)
         pcall(function()
             ping = math.floor(Stats.Network.ServerStatsItem["Data Ping"]:GetValue())
         end)
-        fpsLabel.Text = string.format("⚡ FPS: %d | Ping: %dms | 🥚 AutoFarm: ON", fps, ping)
+        local mode = CONFIG.STEALTH_MODE and "STEALTH" or "NORMAL"
+        fpsLabel.Text = string.format("⚡ FPS: %d | Ping: %dms | Mode: %s", fps, ping, mode)
         frames, tElapsed = 0, 0
-    end
-end)
-
---============================================================
--- NOTIFICATION
---============================================================
-pcall(function()
-    StarterGui:SetCore("SendNotification", {
-        Title = "⚡ Ultra Farm Edition",
-        Text = "Auto Treadmill + Auto Steal Egg aktif!",
-        Duration = 5,
-    })
-end)
-
-print("[Ultra Farm Edition] ✅ Loaded - Auto Treadmill & Auto Steal Egg aktif!")
+    en
